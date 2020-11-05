@@ -1,0 +1,176 @@
+#+TITLE: Waves Sandbox deploy contract
+#+PROPERTY: header-args :session *shell waves* :results silent raw
+
+** Init parameters
+
+#+BEGIN_SRC sh
+SENDER=
+KEYPAIR_PASSWORD=
+NODE_URL=http://localhost:6862
+#+END_SRC
+
+** Contract code
+
+*** contract.py
+
+#+BEGIN_SRC python :tangle src/contract.py
+import json
+import os
+import requests
+import sys
+
+
+def find_param_value(params, name):
+    for param in params:
+        if param['key'] == name: return param['value']
+    return None
+
+
+def print_success(results):
+    print(json.dumps(results, separators=(',', ':')))
+
+
+def print_error(message):
+    print(message)
+    sys.exit(3)
+
+
+def get_value(contract_id):
+    node = os.environ['NODE_API']
+    if not node:
+        print_error("Node REST API address is not defined")
+    token = os.environ["API_TOKEN"]
+    if not token:
+        print_error("Node API token is not defined")
+    headers = {'X-Contract-Api-Token': token}
+    url = '{0}/internal/contracts/{1}/sum'.format(node, contract_id)
+    r = requests.get(url, verify=False, timeout=2, headers=headers)
+    data = r.json()
+    return data['value']
+
+
+if __name__ == '__main__':
+    command = os.environ['COMMAND']
+    if command == 'CALL':
+        contract_id = json.loads(os.environ['TX'])['contractId']
+        value = get_value(contract_id)
+        print_success([{
+            "key": "sum",
+            "type": "integer",
+            "value": value + 1}])
+    elif command == 'CREATE':
+        print_success([{
+            "key": "sum",
+            "type": "integer",
+            "value": 0}])
+    else:
+        print_error("Unknown command {0}".format(command))
+#+END_SRC
+
+*** run.sh
+
+#+BEGIN_SRC sh :tangle src/run.sh
+#!/bin/sh
+
+python contract.py
+#+END_SRC
+
+*** Dockerfile
+
+#+BEGIN_SRC Dockerfile :tangle src/Dockerfile
+FROM python:alpine3.8
+RUN pip install requests
+ADD contract.py /
+ADD run.sh /
+RUN chmod +x run.sh
+CMD exec /bin/sh -c "trap : TERM INT; (while true; do sleep 1000; done) & wait"
+#+END_SRC
+
+** Build contract
+
+#+BEGIN_SRC sh
+docker build -t test-contract src
+#+END_SRC
+
+** Set tag
+
+#+BEGIN_SRC sh
+docker image tag test-contract registry:5000/test-contract
+#+END_SRC
+
+** Push image to the registry
+
+#+BEGIN_SRC sh
+docker push registry:5000/test-contract
+#+END_SRC
+
+** Get image ID
+
+#+BEGIN_SRC sh
+IMAGE_ID=`docker inspect registry:5000/test-contract | grep Id | cut -d'"' -f 4 | cut -d":" -f 2`
+echo $IMAGE_ID
+#+END_SRC
+
+** Sign the create smart-contract transaction
+
+#+BEGIN_SRC sh
+curl -X POST --header 'Content-Type: application/json' --header 'Accept: application/json' --header 'X-Contract-Api-Token' -d "    { \
+        \"fee\": 100000000, \
+        \"image\": \"test-contract:latest\", \
+        \"imageHash\": \"$IMAGE_ID\", \
+        \"contractName\": \"test-contract\", \
+        \"sender\": \"$SENDER\", \
+        \"password\": \"$KEYPAIR_PASSWORD\", \
+        \"params\": [], \
+        \"type\": 103, \
+        \"version\": 1 \
+    }" "$NODE_URL/transactions/signAndBroadcast"
+#+END_SRC
+
+** Find the transaction ID
+
+Id field from JSON result.
+
+#+BEGIN_SRC sh
+TXID=
+#+END_SRC
+
+** Check TXID in blockchain
+
+#+BEGIN_SRC sh
+curl $NODE_URL/transactions/info/$TXID
+#+END_SRC
+
+** Set CONTRACT_ID
+
+#+BEGIN_SRC sh
+CONTRACT_ID=$TXID
+#+END_SRC
+
+** Call contract method
+
+#+BEGIN_SRC sh
+curl -X POST --header 'Content-Type: application/json' --header 'Accept: application/json' --header 'X-Contract-Api-Token' -d "{ \
+    \"contractId\": \"$CONTRACT_ID\", \
+    \"fee\": 10, \
+    \"sender\": \"$SENDER\", \
+    \"password\": \"$KEYPAIR_PASSWORD\", \
+    \"type\": 104, \
+    \"version\": 1, \
+    \"params\": [ \
+        { \
+            \"type\": \"integer\", \
+            \"key\": \"a\", \
+            \"value\": 4 \
+        } \
+    ] \
+}" "$NODE_URL/transactions/signAndbroadcast"
+#+END_SRC
+
+** Get result
+
+#+BEGIN_SRC sh
+curl $NODE_URL/contracts/$CONTRACT_ID
+#+END_SRC
+
+** References
