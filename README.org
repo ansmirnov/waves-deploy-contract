@@ -1,6 +1,10 @@
 #+TITLE: Waves Sandbox deploy contract
 #+PROPERTY: header-args :session *shell waves* :results silent raw
 
+** Prerequisites
+
+- Deployed Waves Enterprise Node (version 1.4.0 has been tested).
+
 ** Init parameters
 
 #+BEGIN_SRC sh
